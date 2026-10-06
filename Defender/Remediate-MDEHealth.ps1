@@ -27,13 +27,15 @@
     Attempts only low-risk recovery actions:
       - Starts Sense if it exists but is stopped.
       - Starts WinDefend if it exists but is stopped.
+      - Enables Defender real-time monitoring if disabled.
+      - Enables Defender behavior monitoring if disabled.
       - Requests a Defender security-intelligence update if stale.
       - Performs a post-remediation health check.
 
     This script does not:
       - Modify onboarding registry values.
       - Run an onboarding package.
-      - Change Defender policy.
+      - Change Defender policy other than enabling real-time and behavior monitoring.
       - Disable tamper protection.
       - Change service startup types.
       - Change AV active/passive mode.
@@ -134,7 +136,47 @@ try {
     }
 
     # ------------------------------------------------------------
-    # 4. Request a signature update when stale
+    # 4. Enable Defender monitoring when disabled
+    # ------------------------------------------------------------
+    try {
+        $MpPreference = Get-MpPreference -ErrorAction Stop
+
+        if ($MpPreference.DisableRealtimeMonitoring) {
+            try {
+                Set-MpPreference `
+                    -DisableRealtimeMonitoring $false `
+                    -ErrorAction Stop
+                $Actions.Add('Enabled real-time monitoring')
+            }
+            catch {
+                $Failures.Add(
+                    "Could not enable real-time monitoring: $($_.Exception.Message)"
+                )
+            }
+        }
+
+        if ($MpPreference.DisableBehaviorMonitoring) {
+            try {
+                Set-MpPreference `
+                    -DisableBehaviorMonitoring $false `
+                    -ErrorAction Stop
+                $Actions.Add('Enabled behavior monitoring')
+            }
+            catch {
+                $Failures.Add(
+                    "Could not enable behavior monitoring: $($_.Exception.Message)"
+                )
+            }
+        }
+    }
+    catch {
+        $Failures.Add(
+            "Unable to inspect Defender monitoring preferences: $($_.Exception.Message)"
+        )
+    }
+
+    # ------------------------------------------------------------
+    # 5. Request a signature update when stale
     # ------------------------------------------------------------
     try {
         $MpStatus = Get-MpComputerStatus -ErrorAction Stop
@@ -156,7 +198,7 @@ try {
     }
 
     # ------------------------------------------------------------
-    # 5. Post-remediation verification
+    # 6. Post-remediation verification
     # ------------------------------------------------------------
     $SenseService = Get-Service -Name 'Sense' -ErrorAction SilentlyContinue
 
@@ -186,6 +228,21 @@ try {
     }
 
     try {
+        $MpPreference = Get-MpPreference -ErrorAction Stop
+
+        if ($MpPreference.DisableRealtimeMonitoring) {
+            $Failures.Add('Real-time monitoring preference remains disabled')
+        }
+
+        if ($MpPreference.DisableBehaviorMonitoring) {
+            $Failures.Add('Behavior monitoring preference remains disabled')
+        }
+    }
+    catch {
+        $Failures.Add('Unable to verify Defender monitoring preferences')
+    }
+
+    try {
         $MpStatus = Get-MpComputerStatus -ErrorAction Stop
 
         if (-not $MpStatus.AMServiceEnabled) {
@@ -212,7 +269,7 @@ try {
     }
 
     # ------------------------------------------------------------
-    # 6. Return remediation result
+    # 7. Return remediation result
     # ------------------------------------------------------------
     $ActionText = if ($Actions.Count -gt 0) {
         $Actions -join '; '
